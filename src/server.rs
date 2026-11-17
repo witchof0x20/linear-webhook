@@ -13,7 +13,7 @@ use serenity::http::Http;
 use crate::config::{Auth, Config};
 use crate::payload::Payload;
 use crate::verify::{check_timestamp, verify_signature};
-use crate::{discord, render};
+use crate::{discord, page, render};
 
 /// Linear payloads are a few KiB; anything this large is not from Linear.
 pub fn body_limit() -> ByteUnit {
@@ -56,7 +56,9 @@ fn now_ms() -> u64 {
         .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
 }
 
-type Reply = (Status, &'static str);
+/// `Ok` is a plain-text answer for Linear. `Err` rejects the request; Rocket
+/// renders it with the static page via [`page::catcher`].
+type Reply = Result<(Status, &'static str), Status>;
 
 #[post("/<server>", data = "<body>")]
 async fn webhook(
@@ -66,22 +68,22 @@ async fn webhook(
     app: &State<App>,
 ) -> Reply {
     let Some(target) = app.config.servers.get(server) else {
-        return (Status::NotFound, "unknown server\n");
+        return Err(Status::NotFound);
     };
 
     let delivery = match headers.delivery {
         Some(d) if !valid_delivery(d) => {
-            return (Status::BadRequest, "malformed Linear-Delivery header\n");
+            return Err(Status::BadRequest);
         }
         d => d,
     };
 
     let body = match body.open(body_limit()).into_bytes().await {
         Ok(b) if b.is_complete() => b.into_inner(),
-        Ok(_) => return (Status::PayloadTooLarge, "body too large\n"),
+        Ok(_) => return Err(Status::PayloadTooLarge),
         Err(e) => {
             log::warn!("[{server}] failed to read body: {e}");
-            return (Status::BadRequest, "failed to read body\n");
+            return Err(Status::BadRequest);
         }
     };
 
@@ -90,14 +92,14 @@ async fn webhook(
         && let Err(e) = verify_signature(secret, &body, headers.signature)
     {
         log::warn!("[{server}] rejected delivery {delivery:?}: {e}");
-        return (Status::Unauthorized, "invalid signature\n");
+        return Err(Status::Unauthorized);
     }
 
     let payload = match Payload::parse(&body) {
         Ok(p) => p,
         Err(e) => {
             log::warn!("[{server}] rejected delivery {delivery:?}: {e}");
-            return (Status::BadRequest, "malformed payload\n");
+            return Err(Status::BadRequest);
         }
     };
 
@@ -105,7 +107,7 @@ async fn webhook(
         && let Err(e) = check_timestamp(payload.webhook_timestamp, now_ms())
     {
         log::warn!("[{server}] rejected delivery {delivery:?}: {e}");
-        return (Status::Unauthorized, "stale webhookTimestamp\n");
+        return Err(Status::Unauthorized);
     }
 
     let message = render::render(&payload, &body, delivery);
@@ -116,11 +118,11 @@ async fn webhook(
                 payload.kind,
                 payload.action
             );
-            (Status::Ok, "ok\n")
+            Ok((Status::Ok, "ok\n"))
         }
         Err(e) => {
             log::error!("[{server}] failed to forward delivery {delivery:?}: {e}");
-            (Status::BadGateway, "failed to forward to Discord\n")
+            Ok((Status::BadGateway, "failed to forward to Discord\n"))
         }
     }
 }
@@ -128,5 +130,6 @@ async fn webhook(
 pub fn rocket(figment: Figment, app: App) -> Rocket<Build> {
     rocket::custom(figment)
         .manage(app)
-        .mount("/", routes![webhook])
+        .mount("/", routes![webhook, page::browse])
+        .register("/", rocket::catchers![page::catcher])
 }

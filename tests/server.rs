@@ -227,3 +227,91 @@ async fn ignore_secret_skips_auth() {
     );
     assert_eq!(captured.lock().unwrap().len(), 1);
 }
+
+/// Marker text that only appears on the static page.
+const PAGE_MARKER: &str = "Linear regression";
+
+async fn assert_page(response: rocket::local::asynchronous::LocalResponse<'_>, status: Status) {
+    assert_eq!(response.status(), status);
+    assert_eq!(
+        response.content_type(),
+        Some(rocket::http::ContentType::HTML)
+    );
+    let csp = response
+        .headers()
+        .get_one("Content-Security-Policy")
+        .unwrap_or_default()
+        .to_owned();
+    assert!(csp.contains("default-src 'none'"), "{csp}");
+    let body = response.into_string().await.unwrap();
+    assert!(body.contains(PAGE_MARKER), "{body}");
+}
+
+#[rocket::async_test]
+async fn browsing_serves_static_page() {
+    let (client, captured) = client("204 No Content", false).await;
+    for path in ["/", "/team", "/some/deep/path?x=1", "/nope"] {
+        assert_page(client.get(path).dispatch().await, Status::Ok).await;
+    }
+    let head = client.head("/").dispatch().await;
+    assert_eq!(head.status(), Status::Ok);
+    assert!(captured.lock().unwrap().is_empty());
+}
+
+#[rocket::async_test]
+async fn rejected_requests_serve_static_page_with_status() {
+    let (client, captured) = client("204 No Content", false).await;
+    let body = body_with_timestamp(now_ms());
+    let sig = sign(&body);
+
+    let r = client
+        .post("/nope")
+        .header(Header::new("Linear-Signature", sig.clone()))
+        .body(body.clone())
+        .dispatch()
+        .await;
+    assert_page(r, Status::NotFound).await;
+    let r = client.post("/team").body(body.clone()).dispatch().await;
+    assert_page(r, Status::Unauthorized).await;
+    let junk = b"{}".to_vec();
+    let r = client
+        .post("/team")
+        .header(Header::new("Linear-Signature", sign(&junk)))
+        .body(junk)
+        .dispatch()
+        .await;
+    assert_page(r, Status::BadRequest).await;
+    let r = client.put("/team").body(body.clone()).dispatch().await;
+    assert_page(r, Status::NotFound).await;
+    let r = client.post("/a/b").body(body).dispatch().await;
+    assert_page(r, Status::NotFound).await;
+
+    assert!(captured.lock().unwrap().is_empty());
+}
+
+#[rocket::async_test]
+async fn linear_responses_stay_plain() {
+    let (ok_client, _) = client("204 No Content", false).await;
+    let body = body_with_timestamp(now_ms());
+    let sig = sign(&body);
+    let r = ok_client
+        .post("/team")
+        .header(Header::new("Linear-Signature", sig))
+        .body(body)
+        .dispatch()
+        .await;
+    assert_eq!(r.status(), Status::Ok);
+    assert_eq!(r.into_string().await.unwrap(), "ok\n");
+
+    let (failing, _) = client("500 Internal Server Error", false).await;
+    let body = body_with_timestamp(now_ms());
+    let sig = sign(&body);
+    let r = failing
+        .post("/team")
+        .header(Header::new("Linear-Signature", sig))
+        .body(body)
+        .dispatch()
+        .await;
+    assert_eq!(r.status(), Status::BadGateway);
+    assert!(!r.into_string().await.unwrap().contains(PAGE_MARKER));
+}

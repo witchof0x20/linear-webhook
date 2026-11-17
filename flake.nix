@@ -21,12 +21,13 @@
           nativeBuildInputs = [ pkgs.pkg-config ];
           buildInputs = [ ];
 
-          # Rust sources plus the JSON fixtures the tests include.
+          # Rust sources, the embedded page, and the JSON fixtures the tests include.
           src = lib.fileset.toSource {
             root = ./.;
             fileset = lib.fileset.unions [
               (craneLib.fileset.commonCargoSources ./.)
               ./examples
+              ./static
             ];
           };
           commonArgs = {

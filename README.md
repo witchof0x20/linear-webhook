@@ -35,9 +35,11 @@ linear-webhook --config config.toml --address 127.0.0.1 --port 9999
 | 200 | Forwarded to Discord |
 | 400 | Malformed payload or `Linear-Delivery` header |
 | 401 | Bad or missing `Linear-Signature`, or `webhookTimestamp` more than 60 s away from now |
-| 404 | Unknown server name |
+| 404 | Unknown server name or path |
 | 413 | Body over 1 MiB |
 | 502 | Discord failed or took longer than 4 s; Linear will retry |
+
+Anything that isn't a Linear delivery gets a static page explaining linear regression ([`static/linear-regression.html`](static/linear-regression.html), compiled into the binary). `GET`/`HEAD` on any path return it with 200; rejected requests return it with the 4xx status above, so Linear still sees failures and retries. Accepted deliveries and 502s get a short plain-text body.
 
 ### Local testing
 
