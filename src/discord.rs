@@ -22,6 +22,21 @@ pub enum SendError {
     Discord(#[from] serenity::Error),
 }
 
+/// Serenity instruments its HTTP calls with `tracing` spans whose fields
+/// include the webhook token. With no tracing subscriber installed, those
+/// spans fall back to the `log` crate and end up in Rocket's log output.
+/// Installing a global no-op subscriber turns that fallback off. Our own
+/// logging goes through `log` directly and is unaffected.
+fn silence_serenity_tracing() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        // Fails only if a subscriber is already installed, which also
+        // disables the fallback.
+        let _ =
+            tracing::subscriber::set_global_default(tracing::subscriber::NoSubscriber::default());
+    });
+}
+
 /// An HTTP client for webhook execution only (no bot token).
 ///
 /// Serenity's ratelimiter is disabled: it would sleep through a 429, blowing
@@ -30,6 +45,7 @@ pub enum SendError {
 ///
 /// `proxy` replaces `https://discord.com` as the API base; used for testing.
 pub fn client(proxy: Option<&str>) -> Http {
+    silence_serenity_tracing();
     let mut builder = HttpBuilder::new("").ratelimiter_disabled(true);
     if let Some(proxy) = proxy {
         builder = builder.proxy(proxy);
