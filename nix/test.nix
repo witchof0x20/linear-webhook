@@ -117,6 +117,12 @@ in
         )
         machine.fail("journalctl -u linear-webhook | grep -E '${token1}|${token2}'")
 
+    with subtest("runs with no capabilities on an unprivileged port"):
+        assert machine.succeed("systemctl show -P CapabilityBoundingSet linear-webhook").strip() == ""
+        assert machine.succeed("systemctl show -P AmbientCapabilities linear-webhook").strip() == ""
+        pid = machine.succeed("systemctl show -P MainPID linear-webhook").strip()
+        machine.succeed(f"grep -qx 'CapBnd:\t0000000000000000' /proc/{pid}/status")
+
     with subtest("Discord failure returns 502"):
         machine.succeed("systemctl stop fake-discord")
         assert send("filed", "issue-update.json", "filed-secret") == "502"

@@ -203,8 +203,10 @@ in
 
         DynamicUser = true;
         UMask = "0077";
-        AmbientCapabilities = lib.optional privilegedPort "CAP_NET_BIND_SERVICE";
-        CapabilityBoundingSet = lib.optional privilegedPort "CAP_NET_BIND_SERVICE";
+        # An empty list emits no line at all, which leaves the default (full)
+        # set; "" emits `Key=`, which clears it.
+        AmbientCapabilities = if privilegedPort then [ "CAP_NET_BIND_SERVICE" ] else "";
+        CapabilityBoundingSet = if privilegedPort then [ "CAP_NET_BIND_SERVICE" ] else "";
         NoNewPrivileges = true;
         PrivateDevices = true;
         PrivateTmp = true;
