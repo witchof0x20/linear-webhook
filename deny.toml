@@ -1,6 +1,23 @@
 # cargo-deny configuration. `nix flake check` runs the bans, licenses and
 # sources checks offline; advisories need the network and run in CI.
 
+[advisories]
+# rustls 0.22.4 / rustls-webpki 0.102.8 come only from serenity's websocket
+# (gateway) stack, which this program never opens; Discord HTTP goes through
+# reqwest on rustls 0.23.46, which is patched. serenity 0.12.5's build script
+# requires `rustls_backend` or `native_tls_backend` for `http`, and both pull
+# in tokio-tungstenite, so no feature flag removes them. Revisit when serenity
+# moves past tokio-tungstenite 0.21.
+ignore = [
+    { id = "RUSTSEC-2026-0049", reason = "rustls-webpki 0.102 only on serenity's unused websocket path" },
+    { id = "RUSTSEC-2026-0098", reason = "rustls-webpki 0.102 only on serenity's unused websocket path" },
+    { id = "RUSTSEC-2026-0099", reason = "rustls-webpki 0.102 only on serenity's unused websocket path" },
+    { id = "RUSTSEC-2026-0104", reason = "rustls-webpki 0.102 only on serenity's unused websocket path" },
+    { id = "RUSTSEC-2026-0382", reason = "rustls-webpki 0.102 only on serenity's unused websocket path" },
+    { id = "RUSTSEC-2026-0346", reason = "rustls 0.22 only on serenity's unused websocket path" },
+    { id = "RUSTSEC-2026-0349", reason = "rustls 0.22 only on serenity's unused websocket path" },
+]
+
 [licenses]
 # Everything here is compatible with GPL-3.0-only (our own license).
 allow = [
