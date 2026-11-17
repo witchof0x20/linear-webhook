@@ -21,6 +21,7 @@ pub const TOTAL_MAX: usize = 6000;
 
 /// Our own, smaller cap so a long issue description doesn't crowd out the fields.
 const DESCRIPTION_SOFT_MAX: usize = 1500;
+const _: () = assert!(DESCRIPTION_SOFT_MAX <= DESCRIPTION_MAX);
 /// Cap for a single value shown inside the "Changes" field.
 const CHANGE_VALUE_MAX: usize = 120;
 const ZSTD_LEVEL: i32 = 10;
@@ -138,16 +139,13 @@ fn humanize_kind(kind: &str) -> String {
     out
 }
 
-fn action_phrase(action: &str) -> String {
+fn action_phrase(action: &str) -> &str {
     match action {
-        "create" => "created".into(),
-        "update" => "updated".into(),
-        "remove" => "removed".into(),
-        "set" => "set".into(),
-        "highRisk" => "at high risk".into(),
-        "breached" => "breached".into(),
-        "revoked" => "revoked".into(),
-        other => other.into(),
+        "create" => "created",
+        "update" => "updated",
+        "remove" => "removed",
+        "highRisk" => "at high risk",
+        other => other,
     }
 }
 
@@ -448,7 +446,7 @@ pub fn render(payload: &Payload, raw_body: &[u8], delivery: Option<&str>) -> Ren
     let mut embed = EmbedSpec {
         title: truncate(&title, TITLE_MAX),
         url: payload.url.clone(),
-        description: description(subject).map(|d| truncate(&d, DESCRIPTION_MAX)),
+        description: description(subject),
         color: action_color(&payload.action),
         author: author(payload),
         fields,
