@@ -23,6 +23,8 @@ impl<'r> Responder<'r, 'static> for Page {
             .status(self.0)
             .header(ContentType::HTML)
             .raw_header("Content-Security-Policy", CSP)
+            .raw_header("X-Content-Type-Options", "nosniff")
+            .raw_header("Referrer-Policy", "no-referrer")
             .sized_body(HTML.len(), Cursor::new(HTML))
             .ok()
     }

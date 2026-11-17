@@ -268,6 +268,9 @@ async fn assert_page(response: rocket::local::asynchronous::LocalResponse<'_>, s
         .unwrap_or_default()
         .to_owned();
     assert!(csp.contains("default-src 'none'"), "{csp}");
+    let headers = response.headers();
+    assert_eq!(headers.get_one("X-Content-Type-Options"), Some("nosniff"));
+    assert_eq!(headers.get_one("Referrer-Policy"), Some("no-referrer"));
     let body = response.into_string().await.unwrap();
     assert!(body.contains(PAGE_MARKER), "{body}");
 }
