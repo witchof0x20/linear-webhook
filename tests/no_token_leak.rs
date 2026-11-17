@@ -61,6 +61,30 @@ async fn webhook_token_is_never_logged() {
     // whole body); only what was logged along the way.
     let _ = discord::send(&http, &webhook, message).await;
 
+    // A rejected send: serenity's error carries the request URL (and so the
+    // token), and the server logs the error's Display.
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    rocket::tokio::spawn(async move {
+        let (mut sock, _) = listener.accept().await.unwrap();
+        let mut buf = [0u8; 65536];
+        let _ = sock.read(&mut buf).await;
+        let body = r#"{"message": "Unknown Webhook", "code": 10015}"#;
+        let resp = format!(
+            "HTTP/1.1 404 Not Found\r\nContent-Type: application/json\r\n\
+             Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        let _ = sock.write_all(resp.as_bytes()).await;
+    });
+    let message = render(&Payload::parse(body).unwrap(), body, None);
+    let err = discord::send(&discord::client(Some(&base)), &webhook, message)
+        .await
+        .unwrap_err();
+    assert!(!err.is_retryable(), "{err}");
+    let shown = err.to_string();
+    assert!(!shown.contains(TOKEN), "token leaked into error: {shown}");
+
     let lines = LINES.lock().unwrap();
     let leaked: Vec<_> = lines.iter().filter(|l| l.contains(TOKEN)).collect();
     assert!(leaked.is_empty(), "token leaked into logs: {leaked:#?}");

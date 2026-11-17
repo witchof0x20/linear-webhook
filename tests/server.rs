@@ -217,6 +217,31 @@ async fn discord_failure_is_502() {
     assert_eq!(captured.lock().unwrap().len(), 1);
 }
 
+/// Discord errors that a retry can't fix (bad request, deleted webhook,
+/// bad token) are acknowledged so Linear doesn't retry them forever.
+/// Rate limits and server errors still ask Linear to retry.
+#[rocket::async_test]
+async fn discord_errors_split_by_kind() {
+    for (discord, expected) in [
+        ("400 Bad Request", Status::Ok),
+        ("401 Unauthorized", Status::Ok),
+        ("404 Not Found", Status::Ok),
+        ("408 Request Timeout", Status::BadGateway),
+        ("429 Too Many Requests", Status::BadGateway),
+        ("503 Service Unavailable", Status::BadGateway),
+    ] {
+        let (client, captured) = client(discord, false).await;
+        let body = body_with_timestamp(now_ms());
+        let sig = sign(&body);
+        assert_eq!(
+            post(&client, "/team", body, Some(sig)).await,
+            expected,
+            "Discord answered {discord}"
+        );
+        assert_eq!(captured.lock().unwrap().len(), 1);
+    }
+}
+
 #[rocket::async_test]
 async fn ignore_secret_skips_auth() {
     let (client, captured) = client("204 No Content", true).await;

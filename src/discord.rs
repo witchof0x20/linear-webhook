@@ -22,6 +22,25 @@ pub enum SendError {
     Discord(#[from] serenity::Error),
 }
 
+impl SendError {
+    /// Whether sending the same message again could succeed: timeouts,
+    /// network errors, rate limits and Discord server errors. A rejected
+    /// message, unknown webhook or bad token won't fix itself.
+    pub fn is_retryable(&self) -> bool {
+        use serenity::http::HttpError;
+        match self {
+            Self::Timeout(_) => true,
+            Self::Discord(serenity::Error::Io(_)) => true,
+            Self::Discord(serenity::Error::Http(HttpError::Request(_))) => true,
+            Self::Discord(serenity::Error::Http(HttpError::UnsuccessfulRequest(r))) => {
+                let s = r.status_code;
+                !s.is_client_error() || matches!(s.as_u16(), 408 | 429)
+            }
+            Self::Discord(_) => false,
+        }
+    }
+}
+
 /// Serenity instruments its HTTP calls with `tracing` spans whose fields
 /// include the webhook token. With no tracing subscriber installed, those
 /// spans fall back to the `log` crate and end up in Rocket's log output.

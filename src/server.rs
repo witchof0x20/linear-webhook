@@ -115,9 +115,15 @@ async fn webhook(
             );
             Ok((Status::Ok, "ok\n"))
         }
-        Err(e) => {
+        Err(e) if e.is_retryable() => {
             log::error!("[{server}] failed to forward delivery {delivery:?}: {e}");
             Ok((Status::BadGateway, "failed to forward to Discord\n"))
+        }
+        // Acknowledge so Linear doesn't retry (and eventually disable the
+        // webhook) over something only the operator can fix.
+        Err(e) => {
+            log::error!("[{server}] dropped delivery {delivery:?}, Discord rejected it: {e}");
+            Ok((Status::Ok, "dropped: Discord rejected the message\n"))
         }
     }
 }
