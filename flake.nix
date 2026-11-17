@@ -40,6 +40,7 @@
             meta = {
               description = "Forward Linear webhooks to Discord";
               mainProgram = "linear-webhook";
+              license = lib.licenses.gpl3Only;
             };
           });
         in

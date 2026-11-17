@@ -104,3 +104,11 @@ nix develop
 cargo test                          # unit and integration tests (fake Discord)
 nix flake check                     # package, clippy, and the NixOS VM test
 ```
+
+## License
+
+Copyright (C) 2026 jade
+
+This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, version 3.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See [LICENSE](LICENSE) for details.

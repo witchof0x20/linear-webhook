@@ -2,6 +2,10 @@
 name = "linear-webhook"
 version = "0.1.0"
 edition = "2024"
+authors = ["jade"]
+description = "Forward Linear webhooks to Discord"
+license = "GPL-3.0-only"
+repository = "https://github.com/witchof0x20/linear-webhook"
 
 [dependencies]
 clap = { version = "4.6.8", features = ["derive", "env"] }
