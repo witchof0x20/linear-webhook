@@ -1,0 +1,16 @@
+{
+  "action": "breached",
+  "type": "IssueSLA",
+  "createdAt": "2026-11-17T17:00:00.000Z",
+  "issueData": {
+    "id": "2174add1-f7c8-44e3-bbf3-2d60b5ea8bc9",
+    "identifier": "ENG-42",
+    "title": "Webhook forwarder drops events during Discord outages",
+    "priorityLabel": "Urgent",
+    "url": "https://linear.app/example/issue/ENG-42"
+  },
+  "url": "https://linear.app/example/issue/ENG-42",
+  "organizationId": "dddd-org",
+  "webhookTimestamp": 1795453200000,
+  "webhookId": "000042e3-d123-4980-b49f-8e140eef9329"
+}
