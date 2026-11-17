@@ -18,7 +18,7 @@
           rust_toolchain =
             p: pkgs.rust-bin.stable.latest;
           craneLib = (crane.mkLib pkgs).overrideToolchain (p: (rust_toolchain p).minimal);
-          nativeBuildInputs = [ pkgs.pkg-config ];
+          nativeBuildInputs = [ ];
           buildInputs = [ ];
 
           # Rust sources, the embedded page, and the JSON fixtures the tests include.
