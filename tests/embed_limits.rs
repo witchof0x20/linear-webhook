@@ -91,8 +91,9 @@ fn body() -> impl Strategy<Value = Vec<u8>> {
         prop::option::of(subject()),
         prop::option::of(updated_from()),
         prop::option::of(text()),
-        prop::option::of(text()),
-        prop::option::of(text()),
+        // Payload::parse rejects ids outside this alphabet.
+        prop::option::of("[A-Za-z0-9-]{1,64}"),
+        prop::option::of("[A-Za-z0-9-]{1,64}"),
         prop::option::of(text()),
     )
         .prop_map(|(data, updated, actor, org, webhook, oauth)| {

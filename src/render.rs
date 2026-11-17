@@ -7,7 +7,7 @@
 use serde_json::{Map, Value};
 use serenity::model::Timestamp;
 
-use crate::payload::{Payload, http_url};
+use crate::payload::{HttpUrl, Payload};
 
 // Discord embed limits (https://discord.com/developers/docs/resources/message#embed-object-embed-limits).
 pub const TITLE_MAX: usize = 256;
@@ -35,8 +35,8 @@ pub struct Field {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Author {
     pub name: String,
-    pub url: Option<String>,
-    pub icon_url: Option<String>,
+    pub url: Option<HttpUrl>,
+    pub icon_url: Option<HttpUrl>,
 }
 
 /// A Discord embed that is guaranteed to be within Discord's limits once
@@ -44,7 +44,7 @@ pub struct Author {
 #[derive(Debug, Clone, PartialEq)]
 pub struct EmbedSpec {
     pub title: String,
-    pub url: Option<String>,
+    pub url: Option<HttpUrl>,
     pub description: Option<String>,
     pub color: u32,
     pub author: Option<Author>,
@@ -90,6 +90,23 @@ fn escape_link_text(s: &str) -> String {
     s.replace('\\', "\\\\")
         .replace('[', "\\[")
         .replace(']', "\\]")
+}
+
+/// Make `s` render as literal text: control characters (including newlines)
+/// become spaces and all ASCII punctuation is backslash-escaped.
+fn escape_markdown(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if c.is_control() {
+            out.push(' ');
+            continue;
+        }
+        if c.is_ascii_punctuation() {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
 }
 
 /// "ProjectUpdate" -> "Project update", "IssueSLA" -> "Issue SLA".
@@ -179,8 +196,8 @@ fn display(value: &Value) -> Option<String> {
             (!parts.is_empty()).then(|| parts.join(", "))
         }
         Value::Object(obj) => match label_of(obj) {
-            Some(label) => Some(match str_of(obj, "url").filter(|u| http_url(u).is_some()) {
-                Some(url) => format!("[{}]({url})", escape_link_text(&label)),
+            Some(label) => Some(match str_of(obj, "url").and_then(HttpUrl::parse) {
+                Some(url) => format!("[{}]({})", escape_link_text(&label), url.as_str()),
                 None => label,
             }),
             None => str_of(obj, "id").map(str::to_owned),
@@ -282,7 +299,7 @@ fn changes_field(
             truncate(&old, CHANGE_VALUE_MAX),
             truncate(&new, CHANGE_VALUE_MAX),
         );
-        lines.push(format!("**{key}**: {old} → {new}"));
+        lines.push(format!("**{}**: {old} → {new}", escape_markdown(key)));
     }
     if lines.is_empty() {
         return None;
@@ -333,15 +350,10 @@ fn author(payload: &Payload) -> Option<Author> {
         Some(kind) if kind != "user" => format!("{name} ({kind})"),
         _ => name.to_owned(),
     };
-    let valid = |u: &Option<String>| {
-        u.as_deref()
-            .filter(|u| http_url(u).is_some())
-            .map(str::to_owned)
-    };
     Some(Author {
         name: truncate(&name, AUTHOR_MAX),
-        url: valid(&actor.url),
-        icon_url: valid(&actor.avatar_url),
+        url: actor.url.clone(),
+        icon_url: actor.avatar_url.clone(),
     })
 }
 
@@ -505,7 +517,7 @@ mod tests {
             "Issue updated: ENG-42 Webhook forwarder drops events during Discord outages"
         );
         assert_eq!(
-            r.embed.url.as_deref(),
+            r.embed.url.as_ref().map(HttpUrl::as_str),
             Some("https://linear.app/example/issue/ENG-42/webhook-forwarder-drops-events")
         );
         assert_eq!(r.embed.author.as_ref().unwrap().name, "Ada Lovelace");
@@ -599,20 +611,11 @@ mod tests {
         let body = serde_json::to_vec(&serde_json::json!({
             "action": "update", "type": "Issue", "webhookTimestamp": 1,
             "actor": {"name": long}, "data": data, "updatedFrom": updated_from,
-            "organizationId": long, "webhookId": long,
+            "organizationId": "o".repeat(64), "webhookId": "w".repeat(64),
         }))
         .unwrap();
         let r = render(&Payload::parse(&body).unwrap(), &body, None);
-        let e = &r.embed;
-        assert!(e.total_len() <= TOTAL_MAX, "{}", e.total_len());
-        assert!(e.fields.len() <= FIELDS_MAX);
-        assert!(e.title.chars().count() <= TITLE_MAX);
-        assert!(e.footer.chars().count() <= FOOTER_MAX);
-        assert!(
-            e.fields
-                .iter()
-                .all(|f| f.value.chars().count() <= FIELD_VALUE_MAX)
-        );
+        assert_within_limits(&r.embed);
         assert!(field(&r, "Changes").unwrap().contains("more"));
         assert!(field(&r, "Truncated").is_some());
     }
@@ -644,13 +647,16 @@ mod tests {
     fn note_fits_without_description() {
         let long = "x".repeat(2000);
         for n in 0..1200 {
+            // The first field is kept and varies in length, so for some `n`
+            // the kept fields end just under the limit, leaving no room for
+            // the note unless one more field is dropped.
             let mut data = serde_json::Map::new();
-            for k in ["state", "status", "team", "assignee", "creator", "user"] {
+            data.insert("state".into(), "s".repeat(n).into());
+            for k in ["status", "team", "assignee", "creator", "user", "lead"] {
                 data.insert(k.into(), long.clone().into());
             }
             let body = serde_json::to_vec(&serde_json::json!({
-                "action": "update", "type": "Issue", "webhookTimestamp": 1,
-                "data": data, "organizationId": "o".repeat(n),
+                "action": "update", "type": "Issue", "webhookTimestamp": 1, "data": data,
             }))
             .unwrap();
             let r = render(&Payload::parse(&body).unwrap(), &body, None);
@@ -676,6 +682,37 @@ mod tests {
         assert_eq!(
             field(&r, "Truncated"),
             Some(format!("{omitted} field(s) omitted; see attachment").as_str())
+        );
+    }
+
+    /// A URL that passes the http(s) check must still not be able to close
+    /// the Markdown link early and start its own.
+    #[test]
+    fn link_destination_cannot_break_out() {
+        let v = serde_json::json!({
+            "name": "n",
+            "url": "https://linear.app/x) [click](https://evil.example/ok",
+        });
+        let out = display(&v).unwrap();
+        assert!(out.starts_with("[n](https://linear.app/x"), "{out}");
+        assert_eq!(out.matches(')').count(), 1, "{out}");
+        assert!(out.ends_with(')'), "{out}");
+        assert!(!out.contains(' '), "{out}");
+    }
+
+    /// `updatedFrom` keys are shown in bold; they must not inject Markdown.
+    #[test]
+    fn change_keys_are_escaped() {
+        let body = serde_json::to_vec(&serde_json::json!({
+            "action": "update", "type": "Issue", "webhookTimestamp": 1,
+            "data": {}, "updatedFrom": {"a**\n# [x](https://evil.example)": 1},
+        }))
+        .unwrap();
+        let r = render(&Payload::parse(&body).unwrap(), &body, None);
+        let changes = field(&r, "Changes").unwrap();
+        assert_eq!(
+            changes,
+            r"**a\*\* \# \[x\]\(https\:\/\/evil\.example\)**: 1 → none"
         );
     }
 

@@ -59,7 +59,7 @@ fn to_embed(spec: EmbedSpec) -> CreateEmbed {
         .colour(spec.color)
         .footer(CreateEmbedFooter::new(spec.footer));
     if let Some(url) = spec.url {
-        embed = embed.url(url);
+        embed = embed.url(url.as_str());
     }
     if let Some(description) = spec.description {
         embed = embed.description(description);
@@ -67,10 +67,10 @@ fn to_embed(spec: EmbedSpec) -> CreateEmbed {
     if let Some(author) = spec.author {
         let mut a = CreateEmbedAuthor::new(author.name);
         if let Some(url) = author.url {
-            a = a.url(url);
+            a = a.url(url.as_str());
         }
         if let Some(icon) = author.icon_url {
-            a = a.icon_url(icon);
+            a = a.icon_url(icon.as_str());
         }
         embed = embed.author(a);
     }

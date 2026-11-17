@@ -11,7 +11,7 @@ use rocket::{Build, Data, Rocket, State, post, routes};
 use serenity::http::Http;
 
 use crate::config::{Auth, Config};
-use crate::payload::Payload;
+use crate::payload::{Payload, is_id};
 use crate::verify::{check_timestamp, verify_signature};
 use crate::{discord, page, render};
 
@@ -45,11 +45,6 @@ impl<'r> FromRequest<'r> for LinearHeaders<'r> {
     }
 }
 
-/// Linear-Delivery is a UUID; it ends up in the footer and the attachment name.
-fn valid_delivery(s: &str) -> bool {
-    (1..=64).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
-}
-
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -72,7 +67,7 @@ async fn webhook(
     };
 
     let delivery = match headers.delivery {
-        Some(d) if !valid_delivery(d) => {
+        Some(d) if !is_id(d) => {
             return Err(Status::BadRequest);
         }
         d => d,

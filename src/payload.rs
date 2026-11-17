@@ -5,7 +5,46 @@
 //! their shape depends on the entity type, and they are only used for display.
 
 use serde::Deserialize;
+use serde::de::{Deserializer, Error as _};
 use serde_json::{Map, Value};
+
+/// An absolute http(s) URL that is also safe as a Markdown link destination.
+///
+/// The URL is normalized by the WHATWG parser, which percent-encodes
+/// whitespace; parentheses, which it leaves alone, are encoded here. So the
+/// serialized form can never end a `[text](url)` link early.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HttpUrl(url::Url);
+
+impl HttpUrl {
+    pub fn parse(s: &str) -> Option<Self> {
+        let u = url::Url::parse(s).ok()?;
+        if !matches!(u.scheme(), "http" | "https") || !u.has_host() {
+            return None;
+        }
+        let escaped = u.as_str().replace('(', "%28").replace(')', "%29");
+        url::Url::parse(&escaped).ok().map(Self)
+    }
+
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
+impl<'de> Deserialize<'de> for HttpUrl {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(d)?;
+        Self::parse(&s).ok_or_else(|| D::Error::custom("not an absolute http(s) URL"))
+    }
+}
+
+/// Display-only URLs: a string that isn't an http(s) URL is dropped rather
+/// than failing the whole delivery.
+fn lenient_url<'de, D: Deserializer<'de>>(d: D) -> Result<Option<HttpUrl>, D::Error> {
+    Ok(Option::<String>::deserialize(d)?
+        .as_deref()
+        .and_then(HttpUrl::parse))
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -13,8 +52,10 @@ pub struct Actor {
     pub id: Option<String>,
     pub name: Option<String>,
     pub email: Option<String>,
-    pub url: Option<String>,
-    pub avatar_url: Option<String>,
+    #[serde(default, deserialize_with = "lenient_url")]
+    pub url: Option<HttpUrl>,
+    #[serde(default, deserialize_with = "lenient_url")]
+    pub avatar_url: Option<HttpUrl>,
     #[serde(rename = "type")]
     pub kind: Option<String>,
 }
@@ -28,7 +69,7 @@ pub struct Payload {
     pub webhook_timestamp: u64,
     pub actor: Option<Actor>,
     pub created_at: Option<String>,
-    pub url: Option<String>,
+    pub url: Option<HttpUrl>,
     pub data: Option<Map<String, Value>>,
     pub updated_from: Option<Map<String, Value>>,
     pub organization_id: Option<String>,
@@ -43,8 +84,8 @@ pub enum PayloadError {
     Json(#[from] serde_json::Error),
     #[error("`{field}` must be 1-64 ASCII alphanumeric characters")]
     BadIdentifier { field: &'static str },
-    #[error("`url` is not an http(s) URL")]
-    BadUrl,
+    #[error("`{field}` must be 1-64 characters of [A-Za-z0-9-]")]
+    BadId { field: &'static str },
 }
 
 /// `action` and `type` end up in titles and filenames, so they are held to a
@@ -53,11 +94,10 @@ fn is_identifier(s: &str) -> bool {
     (1..=64).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_alphanumeric())
 }
 
-/// Parse a string as an absolute http(s) URL.
-pub fn http_url(s: &str) -> Option<url::Url> {
-    url::Url::parse(s)
-        .ok()
-        .filter(|u| matches!(u.scheme(), "http" | "https") && u.has_host())
+/// Linear's ids (organization, webhook, delivery) are UUIDs. They end up in
+/// the footer and attachment name, so hold them to a UUID-like alphabet.
+pub fn is_id(s: &str) -> bool {
+    (1..=64).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
 }
 
 impl Payload {
@@ -69,10 +109,13 @@ impl Payload {
         if !is_identifier(&payload.kind) {
             return Err(PayloadError::BadIdentifier { field: "type" });
         }
-        if let Some(url) = &payload.url
-            && http_url(url).is_none()
-        {
-            return Err(PayloadError::BadUrl);
+        for (field, value) in [
+            ("organizationId", &payload.organization_id),
+            ("webhookId", &payload.webhook_id),
+        ] {
+            if value.as_deref().is_some_and(|v| !is_id(v)) {
+                return Err(PayloadError::BadId { field });
+            }
         }
         Ok(payload)
     }
@@ -120,8 +163,58 @@ mod tests {
         ));
         assert!(matches!(
             Payload::parse(br#"{"action":"create","type":"Issue","webhookTimestamp":1,"url":"javascript:alert(1)"}"#),
-            Err(PayloadError::BadUrl)
+            Err(PayloadError::Json(_))
         ));
+    }
+
+    #[test]
+    fn http_urls() {
+        for bad in [
+            "javascript:alert(1)",
+            "/relative",
+            "mailto:a@b.c",
+            "file:///etc",
+        ] {
+            assert_eq!(HttpUrl::parse(bad), None, "{bad}");
+        }
+        let u = HttpUrl::parse(" https://linear.app/a b)(c?d)#e( ").unwrap();
+        assert_eq!(u.as_str(), "https://linear.app/a%20b%29%28c?d%29#e%28");
+    }
+
+    /// The actor's links are display-only: bad ones are dropped, not fatal.
+    #[test]
+    fn actor_urls_are_lenient() {
+        let p = Payload::parse(
+            br#"{"action":"create","type":"Issue","webhookTimestamp":1,
+                "actor":{"url":"javascript:x","avatarUrl":"https://a.example/i.png"}}"#,
+        )
+        .unwrap();
+        let actor = p.actor.unwrap();
+        assert_eq!(actor.url, None);
+        assert_eq!(
+            actor.avatar_url.as_ref().map(HttpUrl::as_str),
+            Some("https://a.example/i.png")
+        );
+    }
+
+    /// Linear's ids are UUIDs; they end up in the footer.
+    #[test]
+    fn bounds_ids() {
+        for field in ["organizationId", "webhookId"] {
+            for bad in ["a b".to_owned(), "x".repeat(65), String::new()] {
+                let body = serde_json::to_vec(&serde_json::json!({
+                    "action": "create", "type": "Issue", "webhookTimestamp": 1, field: bad,
+                }))
+                .unwrap();
+                assert!(
+                    matches!(Payload::parse(&body), Err(PayloadError::BadId { .. })),
+                    "{field}={bad:?}"
+                );
+            }
+        }
+        let ok = br#"{"action":"create","type":"Issue","webhookTimestamp":1,
+            "organizationId":"d3b7c1e0-0000-4000-8000-000000000001"}"#;
+        assert!(Payload::parse(ok).is_ok());
     }
 
     #[test]
