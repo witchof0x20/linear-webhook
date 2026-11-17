@@ -1,0 +1,9 @@
+config.toml
+
+
+# Added by cargo
+
+/target
+.*.swp
+result
+result-*
