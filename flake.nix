@@ -18,6 +18,8 @@
           rust_toolchain =
             p: pkgs.rust-bin.stable.latest;
           craneLib = (crane.mkLib pkgs).overrideToolchain (p: (rust_toolchain p).minimal);
+          # The minimal toolchain has no clippy or rustfmt.
+          craneLibFull = (crane.mkLib pkgs).overrideToolchain (p: (rust_toolchain p).default);
           nativeBuildInputs = [ ];
           buildInputs = [ ];
 
@@ -53,11 +55,21 @@
 
           checks = {
             inherit linear-webhook;
-            # The minimal toolchain has no clippy.
-            clippy = ((crane.mkLib pkgs).overrideToolchain (p: (rust_toolchain p).default)).cargoClippy (commonArgs // {
+            clippy = craneLibFull.cargoClippy (commonArgs // {
               inherit cargoArtifacts;
               cargoClippyExtraArgs = "--all-targets -- --deny warnings";
             });
+            fmt = craneLibFull.cargoFmt { inherit src; };
+            # bans, licenses and sources; advisories need the network and run in CI.
+            deny = craneLib.cargoDeny {
+              src = lib.fileset.toSource {
+                root = ./.;
+                fileset = lib.fileset.unions [
+                  (craneLib.fileset.commonCargoSources ./.)
+                  ./deny.toml
+                ];
+              };
+            };
           } // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
             nixos = pkgs.testers.runNixOSTest (import ./nix/test.nix { inherit self; });
           };

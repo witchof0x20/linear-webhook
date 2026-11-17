@@ -104,7 +104,7 @@ services.caddy.virtualHosts."hooks.example.com".extraConfig = ''
 ```sh
 nix develop
 cargo test                          # unit and integration tests (fake Discord)
-nix flake check                     # package, clippy, and the NixOS VM test
+nix flake check                     # package, clippy, rustfmt, cargo-deny, and the NixOS VM test
 ```
 
 ## License

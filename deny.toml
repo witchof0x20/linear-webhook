@@ -1,0 +1,28 @@
+# cargo-deny configuration. `nix flake check` runs the bans, licenses and
+# sources checks offline; advisories need the network and run in CI.
+
+[licenses]
+# Everything here is compatible with GPL-3.0-only (our own license).
+allow = [
+    "GPL-3.0-only",
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "CDLA-Permissive-2.0",
+]
+confidence-threshold = 0.9
+
+[bans]
+# serenity pulls in duplicate versions of several crates; not worth fighting.
+multiple-versions = "allow"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
