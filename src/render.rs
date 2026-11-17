@@ -359,21 +359,36 @@ fn footer(payload: &Payload, delivery: Option<&str>) -> String {
     truncate(&parts.join(" · "), FOOTER_MAX)
 }
 
+fn truncated_note(dropped: usize) -> Field {
+    Field {
+        name: "Truncated".into(),
+        value: format!("{dropped} field(s) omitted; see attachment"),
+        inline: false,
+    }
+}
+
 /// Bring the embed under Discord's total size limit by dropping trailing
-/// fields first, then shortening the description.
-fn enforce_total(embed: &mut EmbedSpec) {
-    let mut dropped = 0usize;
-    while embed.total_len() > TOTAL_MAX && !embed.fields.is_empty() {
+/// fields first, then shortening the description. `dropped` counts fields
+/// already removed to respect the field-count limit.
+///
+/// Without fields, the fixed parts (title, author, footer, note) add up to
+/// well under [`TOTAL_MAX`], so shrinking the description always suffices.
+fn enforce_total(embed: &mut EmbedSpec, mut dropped: usize) {
+    let note_len = |dropped: usize| {
+        let note = truncated_note(dropped);
+        note.name.chars().count() + note.value.chars().count()
+    };
+    // Account for the note before deciding whether a field fits.
+    let fits = |embed: &EmbedSpec, dropped: usize| {
+        let note = if dropped > 0 { note_len(dropped) } else { 0 };
+        embed.total_len() + note <= TOTAL_MAX
+    };
+    while !fits(embed, dropped) && !embed.fields.is_empty() {
         embed.fields.pop();
         dropped += 1;
     }
     if dropped > 0 {
-        let note = Field {
-            name: "Truncated".into(),
-            value: format!("{dropped} field(s) omitted; see attachment"),
-            inline: false,
-        };
-        embed.fields.push(note);
+        embed.fields.push(truncated_note(dropped));
     }
     let over = embed.total_len().saturating_sub(TOTAL_MAX);
     if over > 0
@@ -415,6 +430,7 @@ pub fn render(payload: &Payload, raw_body: &[u8], delivery: Option<&str>) -> Ren
         f.value = truncate(&f.value, FIELD_VALUE_MAX);
     }
     // Leave room for the "Truncated" note.
+    let over_count = fields.len().saturating_sub(FIELDS_MAX - 1);
     fields.truncate(FIELDS_MAX - 1);
 
     let mut embed = EmbedSpec {
@@ -430,7 +446,7 @@ pub fn render(payload: &Payload, raw_body: &[u8], delivery: Option<&str>) -> Ren
             .as_deref()
             .and_then(|t| Timestamp::parse(t).ok()),
     };
-    enforce_total(&mut embed);
+    enforce_total(&mut embed, over_count);
 
     let tag = delivery.map_or_else(|| payload.webhook_timestamp.to_string(), str::to_owned);
     let filename = format!("linear-{}-{}-{tag}.json.zst", payload.kind, payload.action);
@@ -599,6 +615,68 @@ mod tests {
         );
         assert!(field(&r, "Changes").unwrap().contains("more"));
         assert!(field(&r, "Truncated").is_some());
+    }
+
+    fn assert_within_limits(e: &EmbedSpec) {
+        assert!(e.total_len() <= TOTAL_MAX, "total {}", e.total_len());
+        assert!(e.fields.len() <= FIELDS_MAX, "fields {}", e.fields.len());
+        assert!(e.title.chars().count() <= TITLE_MAX);
+        assert!(e.footer.chars().count() <= FOOTER_MAX);
+        assert!(
+            e.description
+                .as_deref()
+                .is_none_or(|d| d.chars().count() <= DESCRIPTION_MAX)
+        );
+        assert!(
+            e.author
+                .as_ref()
+                .is_none_or(|a| a.name.chars().count() <= AUTHOR_MAX)
+        );
+        for f in &e.fields {
+            assert!(f.name.chars().count() <= FIELD_NAME_MAX);
+            assert!(f.value.chars().count() <= FIELD_VALUE_MAX);
+        }
+    }
+
+    /// Without a description to shrink, the "Truncated" note itself must
+    /// still fit under the total limit.
+    #[test]
+    fn note_fits_without_description() {
+        let long = "x".repeat(2000);
+        for n in 0..1200 {
+            let mut data = serde_json::Map::new();
+            for k in ["state", "status", "team", "assignee", "creator", "user"] {
+                data.insert(k.into(), long.clone().into());
+            }
+            let body = serde_json::to_vec(&serde_json::json!({
+                "action": "update", "type": "Issue", "webhookTimestamp": 1,
+                "data": data, "organizationId": "o".repeat(n),
+            }))
+            .unwrap();
+            let r = render(&Payload::parse(&body).unwrap(), &body, None);
+            assert_within_limits(&r.embed);
+            assert!(field(&r, "Truncated").is_some());
+        }
+    }
+
+    /// Fields beyond Discord's count limit are reported, not silently lost.
+    #[test]
+    fn too_many_fields_are_reported() {
+        let mut data = serde_json::Map::new();
+        for (key, _) in CURATED {
+            data.insert((*key).into(), "v".into());
+        }
+        let body = serde_json::to_vec(&serde_json::json!({
+            "action": "update", "type": "Issue", "webhookTimestamp": 1, "data": data,
+        }))
+        .unwrap();
+        let r = render(&Payload::parse(&body).unwrap(), &body, None);
+        assert_within_limits(&r.embed);
+        let omitted = CURATED.len() - (FIELDS_MAX - 1);
+        assert_eq!(
+            field(&r, "Truncated"),
+            Some(format!("{omitted} field(s) omitted; see attachment").as_str())
+        );
     }
 
     #[test]

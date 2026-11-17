@@ -22,3 +22,6 @@ toml = "1.2.1"
 tracing = { version = "0.1.44", default-features = false, features = ["std"] }
 url = "2.5.8"
 zstd = "0.14.4"
+
+[dev-dependencies]
+proptest = "1.12.0"
