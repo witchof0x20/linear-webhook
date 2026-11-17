@@ -60,7 +60,9 @@ pub fn verify_signature(
 }
 
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
-#[error("webhookTimestamp {timestamp_ms} is {skew_ms} ms away from now (allowed: {TIMESTAMP_WINDOW_MS} ms)")]
+#[error(
+    "webhookTimestamp {timestamp_ms} is {skew_ms} ms away from now (allowed: {TIMESTAMP_WINDOW_MS} ms)"
+)]
 pub struct StaleTimestamp {
     pub timestamp_ms: u64,
     pub skew_ms: u64,
@@ -72,7 +74,10 @@ pub fn check_timestamp(timestamp_ms: u64, now_ms: u64) -> Result<(), StaleTimest
     if skew_ms <= TIMESTAMP_WINDOW_MS {
         Ok(())
     } else {
-        Err(StaleTimestamp { timestamp_ms, skew_ms })
+        Err(StaleTimestamp {
+            timestamp_ms,
+            skew_ms,
+        })
     }
 }
 
@@ -95,13 +100,19 @@ mod tests {
     #[test]
     fn accepts_valid_signature() {
         let sig = reference_sig();
-        assert_eq!(verify_signature(&Secret::new(SECRET), BODY, Some(&sig)), Ok(()));
+        assert_eq!(
+            verify_signature(&Secret::new(SECRET), BODY, Some(&sig)),
+            Ok(())
+        );
     }
 
     #[test]
     fn accepts_uppercase_hex() {
         let sig = reference_sig().to_uppercase();
-        assert_eq!(verify_signature(&Secret::new(SECRET), BODY, Some(&sig)), Ok(()));
+        assert_eq!(
+            verify_signature(&Secret::new(SECRET), BODY, Some(&sig)),
+            Ok(())
+        );
     }
 
     #[test]
@@ -115,10 +126,19 @@ mod tests {
     #[test]
     fn rejects_non_hex_and_wrong_length() {
         let s = Secret::new(SECRET);
-        assert_eq!(verify_signature(&s, BODY, Some("zz")), Err(SignatureError::Malformed));
-        assert_eq!(verify_signature(&s, BODY, Some("abcd")), Err(SignatureError::Malformed));
+        assert_eq!(
+            verify_signature(&s, BODY, Some("zz")),
+            Err(SignatureError::Malformed)
+        );
+        assert_eq!(
+            verify_signature(&s, BODY, Some("abcd")),
+            Err(SignatureError::Malformed)
+        );
         let long = format!("{}00", reference_sig());
-        assert_eq!(verify_signature(&s, BODY, Some(&long)), Err(SignatureError::Malformed));
+        assert_eq!(
+            verify_signature(&s, BODY, Some(&long)),
+            Err(SignatureError::Malformed)
+        );
     }
 
     #[test]
@@ -142,7 +162,10 @@ mod tests {
         assert!(check_timestamp(now + TIMESTAMP_WINDOW_MS, now).is_ok());
         assert_eq!(
             check_timestamp(now - TIMESTAMP_WINDOW_MS - 1, now),
-            Err(StaleTimestamp { timestamp_ms: now - TIMESTAMP_WINDOW_MS - 1, skew_ms: TIMESTAMP_WINDOW_MS + 1 })
+            Err(StaleTimestamp {
+                timestamp_ms: now - TIMESTAMP_WINDOW_MS - 1,
+                skew_ms: TIMESTAMP_WINDOW_MS + 1
+            })
         );
         assert!(check_timestamp(now + TIMESTAMP_WINDOW_MS + 1, now).is_err());
         assert!(check_timestamp(0, now).is_err());

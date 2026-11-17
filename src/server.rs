@@ -1,0 +1,132 @@
+//! The Rocket HTTP server: `POST /<server>` per configured server.
+
+use std::convert::Infallible;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use rocket::data::{ByteUnit, ToByteUnit};
+use rocket::figment::Figment;
+use rocket::http::Status;
+use rocket::request::{FromRequest, Outcome, Request};
+use rocket::{Build, Data, Rocket, State, post, routes};
+use serenity::http::Http;
+
+use crate::config::{Auth, Config};
+use crate::payload::Payload;
+use crate::verify::{check_timestamp, verify_signature};
+use crate::{discord, render};
+
+/// Linear payloads are a few KiB; anything this large is not from Linear.
+pub fn body_limit() -> ByteUnit {
+    1.mebibytes()
+}
+
+pub struct App {
+    pub config: Config,
+    pub http: Http,
+}
+
+/// The Linear headers we use. Recognition happens in the handler so it can
+/// pick the status code.
+pub struct LinearHeaders<'r> {
+    signature: Option<&'r str>,
+    delivery: Option<&'r str>,
+}
+
+#[rocket::async_trait]
+impl<'r> FromRequest<'r> for LinearHeaders<'r> {
+    type Error = Infallible;
+
+    async fn from_request(req: &'r Request<'_>) -> Outcome<Self, Self::Error> {
+        let headers = req.headers();
+        Outcome::Success(Self {
+            signature: headers.get_one("Linear-Signature"),
+            delivery: headers.get_one("Linear-Delivery"),
+        })
+    }
+}
+
+/// Linear-Delivery is a UUID; it ends up in the footer and the attachment name.
+fn valid_delivery(s: &str) -> bool {
+    (1..=64).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+}
+
+type Reply = (Status, &'static str);
+
+#[post("/<server>", data = "<body>")]
+async fn webhook(
+    server: &str,
+    headers: LinearHeaders<'_>,
+    body: Data<'_>,
+    app: &State<App>,
+) -> Reply {
+    let Some(target) = app.config.servers.get(server) else {
+        return (Status::NotFound, "unknown server\n");
+    };
+
+    let delivery = match headers.delivery {
+        Some(d) if !valid_delivery(d) => {
+            return (Status::BadRequest, "malformed Linear-Delivery header\n");
+        }
+        d => d,
+    };
+
+    let body = match body.open(body_limit()).into_bytes().await {
+        Ok(b) if b.is_complete() => b.into_inner(),
+        Ok(_) => return (Status::PayloadTooLarge, "body too large\n"),
+        Err(e) => {
+            log::warn!("[{server}] failed to read body: {e}");
+            return (Status::BadRequest, "failed to read body\n");
+        }
+    };
+
+    // Authenticate before parsing anything.
+    if let Auth::Verify(secret) = &target.auth
+        && let Err(e) = verify_signature(secret, &body, headers.signature)
+    {
+        log::warn!("[{server}] rejected delivery {delivery:?}: {e}");
+        return (Status::Unauthorized, "invalid signature\n");
+    }
+
+    let payload = match Payload::parse(&body) {
+        Ok(p) => p,
+        Err(e) => {
+            log::warn!("[{server}] rejected delivery {delivery:?}: {e}");
+            return (Status::BadRequest, "malformed payload\n");
+        }
+    };
+
+    if let Auth::Verify(_) = &target.auth
+        && let Err(e) = check_timestamp(payload.webhook_timestamp, now_ms())
+    {
+        log::warn!("[{server}] rejected delivery {delivery:?}: {e}");
+        return (Status::Unauthorized, "stale webhookTimestamp\n");
+    }
+
+    let message = render::render(&payload, &body, delivery);
+    match discord::send(&app.http, &target.webhook, message).await {
+        Ok(()) => {
+            log::info!(
+                "[{server}] forwarded {} {} (delivery {delivery:?})",
+                payload.kind,
+                payload.action
+            );
+            (Status::Ok, "ok\n")
+        }
+        Err(e) => {
+            log::error!("[{server}] failed to forward delivery {delivery:?}: {e}");
+            (Status::BadGateway, "failed to forward to Discord\n")
+        }
+    }
+}
+
+pub fn rocket(figment: Figment, app: App) -> Rocket<Build> {
+    rocket::custom(figment)
+        .manage(app)
+        .mount("/", routes![webhook])
+}

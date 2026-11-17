@@ -69,10 +69,10 @@ impl Payload {
         if !is_identifier(&payload.kind) {
             return Err(PayloadError::BadIdentifier { field: "type" });
         }
-        if let Some(url) = &payload.url {
-            if http_url(url).is_none() {
-                return Err(PayloadError::BadUrl);
-            }
+        if let Some(url) = &payload.url
+            && http_url(url).is_none()
+        {
+            return Err(PayloadError::BadUrl);
         }
         Ok(payload)
     }
@@ -101,7 +101,9 @@ mod tests {
         assert!(Payload::parse(br#"{"type":"Issue","webhookTimestamp":1}"#).is_err());
         assert!(Payload::parse(br#"{"action":"create","webhookTimestamp":1}"#).is_err());
         assert!(Payload::parse(br#"{"action":"create","type":"Issue"}"#).is_err());
-        assert!(Payload::parse(br#"{"action":"create","type":"Issue","webhookTimestamp":-1}"#).is_err());
+        assert!(
+            Payload::parse(br#"{"action":"create","type":"Issue","webhookTimestamp":-1}"#).is_err()
+        );
         assert!(Payload::parse(br#"[]"#).is_err());
         assert!(Payload::parse(b"not json").is_err());
     }

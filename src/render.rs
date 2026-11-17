@@ -7,7 +7,7 @@
 use serde_json::{Map, Value};
 use serenity::model::Timestamp;
 
-use crate::payload::{http_url, Payload};
+use crate::payload::{Payload, http_url};
 
 // Discord embed limits (https://discord.com/developers/docs/resources/message#embed-object-embed-limits).
 pub const TITLE_MAX: usize = 256;
@@ -60,7 +60,11 @@ impl EmbedSpec {
             + self.description.as_deref().map_or(0, n)
             + self.author.as_ref().map_or(0, |a| n(&a.name))
             + n(&self.footer)
-            + self.fields.iter().map(|f| n(&f.name) + n(&f.value)).sum::<usize>()
+            + self
+                .fields
+                .iter()
+                .map(|f| n(&f.name) + n(&f.value))
+                .sum::<usize>()
     }
 }
 
@@ -83,7 +87,9 @@ pub fn truncate(s: &str, max: usize) -> String {
 
 /// Escape characters that would break out of Discord markdown link text.
 fn escape_link_text(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('[', "\\[").replace(']', "\\]")
+    s.replace('\\', "\\\\")
+        .replace('[', "\\[")
+        .replace(']', "\\]")
 }
 
 /// "ProjectUpdate" -> "Project update", "IssueSLA" -> "Issue SLA".
@@ -139,7 +145,9 @@ fn action_color(action: &str) -> u32 {
 }
 
 fn str_of<'a>(obj: &'a Map<String, Value>, key: &str) -> Option<&'a str> {
-    obj.get(key).and_then(Value::as_str).filter(|s| !s.is_empty())
+    obj.get(key)
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
 }
 
 /// Short human label for an entity object, e.g. "ENG-42 Fix bug" or "In Progress".
@@ -214,7 +222,9 @@ const CURATED: &[(&str, &str)] = &[
 ];
 
 fn priority_name(p: u64) -> Option<&'static str> {
-    ["No priority", "Urgent", "High", "Medium", "Low"].get(p as usize).copied()
+    ["No priority", "Urgent", "High", "Medium", "Low"]
+        .get(p as usize)
+        .copied()
 }
 
 fn curated_fields(subject: &Map<String, Value>) -> Vec<Field> {
@@ -223,12 +233,20 @@ fn curated_fields(subject: &Map<String, Value>) -> Vec<Field> {
         let value = match key {
             // Fall back to the numeric priority when no label was sent.
             "priorityLabel" => display(subject.get(key).unwrap_or(&Value::Null)).or_else(|| {
-                subject.get("priority").and_then(Value::as_u64).and_then(priority_name).map(Into::into)
+                subject
+                    .get("priority")
+                    .and_then(Value::as_u64)
+                    .and_then(priority_name)
+                    .map(Into::into)
             }),
             _ => subject.get(key).and_then(display),
         };
         if let Some(value) = value {
-            fields.push(Field { name: name.into(), value, inline: true });
+            fields.push(Field {
+                name: name.into(),
+                value,
+                inline: true,
+            });
         }
     }
     fields
@@ -247,7 +265,10 @@ fn current_value(subject: &Map<String, Value>, key: &str) -> Option<String> {
     subject.get(key).and_then(display)
 }
 
-fn changes_field(subject: Option<&Map<String, Value>>, updated_from: &Map<String, Value>) -> Option<Field> {
+fn changes_field(
+    subject: Option<&Map<String, Value>>,
+    updated_from: &Map<String, Value>,
+) -> Option<Field> {
     let empty = Map::new();
     let subject = subject.unwrap_or(&empty);
     let mut lines = Vec::new();
@@ -257,7 +278,10 @@ fn changes_field(subject: Option<&Map<String, Value>>, updated_from: &Map<String
         }
         let old = display(old).unwrap_or_else(|| "none".into());
         let new = current_value(subject, key).unwrap_or_else(|| "none".into());
-        let (old, new) = (truncate(&old, CHANGE_VALUE_MAX), truncate(&new, CHANGE_VALUE_MAX));
+        let (old, new) = (
+            truncate(&old, CHANGE_VALUE_MAX),
+            truncate(&new, CHANGE_VALUE_MAX),
+        );
         lines.push(format!("**{key}**: {old} → {new}"));
     }
     if lines.is_empty() {
@@ -268,14 +292,22 @@ fn changes_field(subject: Option<&Map<String, Value>>, updated_from: &Map<String
     for (i, line) in lines.iter().enumerate() {
         let remaining = lines.len() - i;
         let more = format!("\n…and {remaining} more");
-        let candidate = if value.is_empty() { line.clone() } else { format!("{value}\n{line}") };
+        let candidate = if value.is_empty() {
+            line.clone()
+        } else {
+            format!("{value}\n{line}")
+        };
         if candidate.chars().count() + more.chars().count() > FIELD_VALUE_MAX {
             value.push_str(if value.is_empty() { &more[1..] } else { &more });
             break;
         }
         value = candidate;
     }
-    Some(Field { name: "Changes".into(), value, inline: false })
+    Some(Field {
+        name: "Changes".into(),
+        value,
+        inline: false,
+    })
 }
 
 fn headline(subject: Option<&Map<String, Value>>) -> Option<String> {
@@ -301,8 +333,16 @@ fn author(payload: &Payload) -> Option<Author> {
         Some(kind) if kind != "user" => format!("{name} ({kind})"),
         _ => name.to_owned(),
     };
-    let valid = |u: &Option<String>| u.as_deref().filter(|u| http_url(u).is_some()).map(str::to_owned);
-    Some(Author { name: truncate(&name, AUTHOR_MAX), url: valid(&actor.url), icon_url: valid(&actor.avatar_url) })
+    let valid = |u: &Option<String>| {
+        u.as_deref()
+            .filter(|u| http_url(u).is_some())
+            .map(str::to_owned)
+    };
+    Some(Author {
+        name: truncate(&name, AUTHOR_MAX),
+        url: valid(&actor.url),
+        icon_url: valid(&actor.avatar_url),
+    })
 }
 
 fn footer(payload: &Payload, delivery: Option<&str>) -> String {
@@ -336,18 +376,22 @@ fn enforce_total(embed: &mut EmbedSpec) {
         embed.fields.push(note);
     }
     let over = embed.total_len().saturating_sub(TOTAL_MAX);
-    if over > 0 {
-        if let Some(desc) = &embed.description {
-            let keep = desc.chars().count().saturating_sub(over);
-            embed.description = Some(truncate(desc, keep)).filter(|d| !d.is_empty());
-        }
+    if over > 0
+        && let Some(desc) = &embed.description
+    {
+        let keep = desc.chars().count().saturating_sub(over);
+        embed.description = Some(truncate(desc, keep)).filter(|d| !d.is_empty());
     }
 }
 
 pub fn render(payload: &Payload, raw_body: &[u8], delivery: Option<&str>) -> Rendered {
     let subject = payload.subject();
 
-    let mut title = format!("{} {}", humanize_kind(&payload.kind), action_phrase(&payload.action));
+    let mut title = format!(
+        "{} {}",
+        humanize_kind(&payload.kind),
+        action_phrase(&payload.action)
+    );
     if let Some(h) = headline(subject) {
         title = format!("{title}: {h}");
     }
@@ -360,7 +404,11 @@ pub fn render(payload: &Payload, raw_body: &[u8], delivery: Option<&str>) -> Ren
         fields.extend(curated_fields(subject));
     }
     if let Some(client) = &payload.oauth_client_id {
-        fields.push(Field { name: "OAuth client".into(), value: client.clone(), inline: true });
+        fields.push(Field {
+            name: "OAuth client".into(),
+            value: client.clone(),
+            inline: true,
+        });
     }
     for f in &mut fields {
         f.name = truncate(&f.name, FIELD_NAME_MAX);
@@ -377,15 +425,23 @@ pub fn render(payload: &Payload, raw_body: &[u8], delivery: Option<&str>) -> Ren
         author: author(payload),
         fields,
         footer: footer(payload, delivery),
-        timestamp: payload.created_at.as_deref().and_then(|t| Timestamp::parse(t).ok()),
+        timestamp: payload
+            .created_at
+            .as_deref()
+            .and_then(|t| Timestamp::parse(t).ok()),
     };
     enforce_total(&mut embed);
 
     let tag = delivery.map_or_else(|| payload.webhook_timestamp.to_string(), str::to_owned);
     let filename = format!("linear-{}-{}-{tag}.json.zst", payload.kind, payload.action);
-    let attachment = zstd::bulk::compress(raw_body, ZSTD_LEVEL).expect("in-memory zstd compression cannot fail");
+    let attachment =
+        zstd::bulk::compress(raw_body, ZSTD_LEVEL).expect("in-memory zstd compression cannot fail");
 
-    Rendered { embed, filename, attachment }
+    Rendered {
+        embed,
+        filename,
+        attachment,
+    }
 }
 
 #[cfg(test)]
@@ -393,11 +449,19 @@ mod tests {
     use super::*;
 
     fn fixture(bytes: &[u8]) -> Rendered {
-        render(&Payload::parse(bytes).unwrap(), bytes, Some("d3b7c1e0-0000-4000-8000-000000000001"))
+        render(
+            &Payload::parse(bytes).unwrap(),
+            bytes,
+            Some("d3b7c1e0-0000-4000-8000-000000000001"),
+        )
     }
 
     fn field<'a>(r: &'a Rendered, name: &str) -> Option<&'a str> {
-        r.embed.fields.iter().find(|f| f.name == name).map(|f| f.value.as_str())
+        r.embed
+            .fields
+            .iter()
+            .find(|f| f.name == name)
+            .map(|f| f.value.as_str())
     }
 
     #[test]
@@ -420,24 +484,48 @@ mod tests {
     fn renders_issue_update() {
         let body = include_bytes!("../examples/issue-update.json");
         let r = fixture(body);
-        assert_eq!(r.embed.title, "Issue updated: ENG-42 Webhook forwarder drops events during Discord outages");
-        assert_eq!(r.embed.url.as_deref(), Some("https://linear.app/example/issue/ENG-42/webhook-forwarder-drops-events"));
+        assert_eq!(
+            r.embed.title,
+            "Issue updated: ENG-42 Webhook forwarder drops events during Discord outages"
+        );
+        assert_eq!(
+            r.embed.url.as_deref(),
+            Some("https://linear.app/example/issue/ENG-42/webhook-forwarder-drops-events")
+        );
         assert_eq!(r.embed.author.as_ref().unwrap().name, "Ada Lovelace");
         assert_eq!(field(&r, "State"), Some("In Progress"));
         assert_eq!(field(&r, "Priority"), Some("High"));
         assert_eq!(field(&r, "Team"), Some("Engineering"));
         assert_eq!(field(&r, "Labels"), Some("Bug, Infra"));
-        assert_eq!(field(&r, "Project"), Some("[Notifications](https://linear.app/example/project/notifications)"));
+        assert_eq!(
+            field(&r, "Project"),
+            Some("[Notifications](https://linear.app/example/project/notifications)")
+        );
         assert_eq!(field(&r, "Cycle"), Some("#12"));
         let changes = field(&r, "Changes").unwrap();
-        assert!(changes.contains("**stateId**: aaaa-todo → In Progress"), "{changes}");
+        assert!(
+            changes.contains("**stateId**: aaaa-todo → In Progress"),
+            "{changes}"
+        );
         assert!(changes.contains("**priority**: 3 → 2"), "{changes}");
-        assert!(changes.contains("**assigneeId**: none → [Ada Lovelace]"), "{changes}");
+        assert!(
+            changes.contains("**assigneeId**: none → [Ada Lovelace]"),
+            "{changes}"
+        );
         assert!(!changes.contains("updatedAt"));
-        assert!(r.embed.description.as_ref().unwrap().contains("return `502`"));
+        assert!(
+            r.embed
+                .description
+                .as_ref()
+                .unwrap()
+                .contains("return `502`")
+        );
         assert!(r.embed.footer.contains("delivery d3b7c1e0"));
         assert!(r.embed.timestamp.is_some());
-        assert_eq!(r.filename, "linear-Issue-update-d3b7c1e0-0000-4000-8000-000000000001.json.zst");
+        assert_eq!(
+            r.filename,
+            "linear-Issue-update-d3b7c1e0-0000-4000-8000-000000000001.json.zst"
+        );
         // The attachment round-trips to the exact bytes Linear sent.
         assert_eq!(zstd::decode_all(&r.attachment[..]).unwrap(), body);
     }
@@ -445,19 +533,34 @@ mod tests {
     #[test]
     fn renders_comment_and_sla() {
         let c = fixture(include_bytes!("../examples/comment-create.json"));
-        assert!(c.embed.title.starts_with("Comment created: Repro'd locally."), "{}", c.embed.title);
-        assert_eq!(field(&c, "Issue"), Some("[ENG-42 Webhook forwarder drops events during Discord outages](https://linear.app/example/issue/ENG-42)"));
+        assert!(
+            c.embed
+                .title
+                .starts_with("Comment created: Repro'd locally."),
+            "{}",
+            c.embed.title
+        );
+        assert_eq!(
+            field(&c, "Issue"),
+            Some(
+                "[ENG-42 Webhook forwarder drops events during Discord outages](https://linear.app/example/issue/ENG-42)"
+            )
+        );
         assert_eq!(c.embed.color, 0x2ecc71);
 
         let s = fixture(include_bytes!("../examples/issue-sla-breached.json"));
-        assert_eq!(s.embed.title, "Issue SLA breached: ENG-42 Webhook forwarder drops events during Discord outages");
+        assert_eq!(
+            s.embed.title,
+            "Issue SLA breached: ENG-42 Webhook forwarder drops events during Discord outages"
+        );
         assert_eq!(field(&s, "Priority"), Some("Urgent"));
         assert!(s.embed.author.is_none());
     }
 
     #[test]
     fn minimal_payload() {
-        let body = br#"{"action":"revoked","type":"OAuthApp","webhookTimestamp":5,"oauthClientId":"abc"}"#;
+        let body =
+            br#"{"action":"revoked","type":"OAuthApp","webhookTimestamp":5,"oauthClientId":"abc"}"#;
         let r = render(&Payload::parse(body).unwrap(), body, None);
         assert_eq!(r.embed.title, "OAuth app revoked");
         assert_eq!(field(&r, "OAuth client"), Some("abc"));
@@ -489,7 +592,11 @@ mod tests {
         assert!(e.fields.len() <= FIELDS_MAX);
         assert!(e.title.chars().count() <= TITLE_MAX);
         assert!(e.footer.chars().count() <= FOOTER_MAX);
-        assert!(e.fields.iter().all(|f| f.value.chars().count() <= FIELD_VALUE_MAX));
+        assert!(
+            e.fields
+                .iter()
+                .all(|f| f.value.chars().count() <= FIELD_VALUE_MAX)
+        );
         assert!(field(&r, "Changes").unwrap().contains("more"));
         assert!(field(&r, "Truncated").is_some());
     }
@@ -497,7 +604,10 @@ mod tests {
     #[test]
     fn link_text_is_escaped_and_bad_urls_unlinked() {
         let v = serde_json::json!({"name": "a](https://evil)", "url": "https://linear.app/x"});
-        assert_eq!(display(&v).unwrap(), "[a\\](https://evil)](https://linear.app/x)");
+        assert_eq!(
+            display(&v).unwrap(),
+            "[a\\](https://evil)](https://linear.app/x)"
+        );
         let v = serde_json::json!({"name": "n", "url": "javascript:alert(1)"});
         assert_eq!(display(&v).unwrap(), "n");
     }
